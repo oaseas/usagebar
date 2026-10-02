@@ -1,6 +1,10 @@
-# UsageBar
+<p align="center">
+  <img src="Assets/UsageBar-AppIcon.png" alt="UsageBar app icon" width="160">
+</p>
 
-A lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.
+<h1 align="center">UsageBar</h1>
+
+<p align="center"><strong>A lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.</strong></p>
 
 UsageBar keeps your current allowance visible in the menu bar, so you do not have to keep opening account settings just to see how much you have left. It currently supports ChatGPT/Codex and Claude, with room to add more AI services over time.
 
@@ -168,6 +172,10 @@ One principle I would like to keep as the project grows: UsageBar should remain 
 That matters more to me than adding features simply because they are possible.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) if you would like to help.
+
+## Made by
+
+UsageBar is made by **oaseas**. You can find me on [GitHub](https://github.com/oaseas) and [X](https://x.com/oaseas).
 
 ## Disclaimer
 

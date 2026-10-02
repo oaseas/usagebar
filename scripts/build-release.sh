@@ -29,8 +29,9 @@ xcrun swiftc -O -whole-module-optimization   -sdk "$SDK" -target x86_64-apple-ma
 
 lipo -create "$ARM_BIN" "$INTEL_BIN" -output "$UNIVERSAL_BIN"
 
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$UNIVERSAL_BIN" "$APP/Contents/MacOS/UsageBar"
+./scripts/make-icon.sh "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -43,6 +44,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
 <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
