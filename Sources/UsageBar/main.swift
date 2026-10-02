@@ -31,8 +31,12 @@ if CommandLine.arguments.contains("--check-live") {
     RunLoop.main.run()
 }
 
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    withExtendedLifetime(delegate) {
+        app.run()
+    }
+}
