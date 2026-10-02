@@ -1,0 +1,38 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build local app bundle
+        run: ./scripts/build-app.sh
+
+      - name: Verify app signature
+        run: codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
+
+      - name: Build Universal release candidate
+        run: ./scripts/build-release.sh
+
+      - name: Verify Universal architectures
+        run: |
+          ARCHS="$(lipo -archs dist/UsageBar.app/Contents/MacOS/UsageBar)"
+          echo "$ARCHS"
+          [[ "$ARCHS" == *arm64* ]]
+          [[ "$ARCHS" == *x86_64* ]]
