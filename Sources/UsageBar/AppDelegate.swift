@@ -10,6 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var colorStyle = 0
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
+    private var readings: [AIService: UsageSnapshot] = [:]
+    private var readingErrors: [AIService: String] = [:]
+    private var lastSecondaryRefresh = Date.distantPast
+    private var controlTimer: Timer?
     private var snapshot: UsageSnapshot?
     private var errorMessage: String?
     private var requestedWindow: UsageWindow = .fiveHour
@@ -52,11 +56,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         render()
         scheduleTimer()
+        controlTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.processCommand() }
+        }
         refresh()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        controlTimer?.invalidate()
+        publishStatus(running: false)
         refreshTask?.cancel()
         Task { await liveProvider.disconnect() }
     }
@@ -73,35 +82,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func refreshNow() { refresh() }
+    @objc private func refreshNow() { Task { await liveProvider.invalidateCache(); refresh() } }
 
     private var isMock: Bool { useMock }
     private func selectProvider() {
         if isMock {
             provider = MockUsageProvider(scenario: scenario, service: service)
             Task { await liveProvider.disconnect() }
-        } else if service == .chatGPT {
-            provider = liveProvider
         } else {
-            provider = claudeProvider
-            Task { await liveProvider.disconnect() }
+            provider = service == .chatGPT ? liveProvider : claudeProvider
         }
     }
 
     private func refresh() {
         guard refreshTask == nil else { return }
         let currentProvider = provider
+        let currentService = service
+        let currentMock = isMock
         refreshTask = Task { [weak self] in
             do {
                 let value = try await currentProvider.fetchUsage()
                 guard !Task.isCancelled, let self else { return }
                 self.snapshot = value
+                self.readings[currentService] = value
+                self.readingErrors[currentService] = nil
                 self.errorMessage = nil
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.errorMessage = error.localizedDescription
+                self.readingErrors[currentService] = error.localizedDescription
             }
             guard let self else { return }
+            if !currentMock, Date().timeIntervalSince(self.lastSecondaryRefresh) >= 30 {
+                self.lastSecondaryRefresh = Date()
+                let other: AIService = currentService == .chatGPT ? .claude : .chatGPT
+                let otherProvider: any UsageProvider = other == .chatGPT ? self.liveProvider : self.claudeProvider
+                do {
+                    let value = try await otherProvider.fetchUsage()
+                    guard !Task.isCancelled else { return }
+                    self.readings[other] = value
+                    self.readingErrors[other] = nil
+                } catch { self.readingErrors[other] = error.localizedDescription }
+            }
+            guard !Task.isCancelled else { return }
             self.refreshTask = nil
             self.render()
         }
@@ -115,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func render() {
+        publishStatus()
         guard let button = statusItem.button else { return }
         let window = snapshot?.effectiveWindow(requested: requestedWindow) ?? requestedWindow
         let fraction = snapshot?[window].fraction(showUsed: showUsed)
@@ -158,7 +182,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mode = showUsed ? "used" : "remaining"
         let forced = snapshot?.effectiveWindow(requested: .fiveHour) == .weekly
         let detail = "\(window == .fiveHour ? "5-hour" : "Weekly") usage: \(percentage) \(mode). \(snapshot?.source ?? (isMock ? "Mock data" : "Live data pending"))."
-
         button.toolTip = detail + (snapshot?.isStale == true ? " Cached reading is over 10 minutes old. Open Claude Settings → Usage to update it." : "") + (forced ? " Weekly limit exhausted." : "") + (errorMessage.map { " Last refresh failed: \($0)" } ?? "") + " Left-click to toggle; right-click for settings."
         button.setAccessibilityLabel("UsageBar, " + detail)
     }
@@ -173,12 +196,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
-        add("UsageBar — \(service.rawValue) \(isMock ? "MOCK DATA" : service == .claude ? "LOCAL CACHE" : "LIVE")", to: menu)
+        add("UsageBar: \(service.rawValue) \(isMock ? "MOCK DATA" : service == .claude ? "LOCAL CACHE" : "LIVE")", to: menu)
         if !isMock {
-            add(service == .chatGPT ? "ChatGPT account · Codex allowance" : "Claude Desktop cached percentages", to: menu)
-            if service == .claude { add("Claude records at most every 4½ minutes", to: menu) }
+            add(service == .chatGPT ? "ChatGPT account ´ Codex allowance" : "Claude Desktop cached percentages", to: menu)
+            if service == .claude { add("Claude records at most every 4Ž minutes", to: menu) }
         }
-
         let serviceMenu = NSMenu()
         for (index, value) in AIService.allCases.enumerated() {
             add(value.rawValue, to: serviceMenu, action: #selector(changeService(_:)), tag: index, checked: value == service)
@@ -194,29 +216,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 add("\(name): \(Int((allowance.normalizedRemaining * 100).rounded()))% remaining", to: menu)
                 if let reset = allowance.resetsAt {
                     add("Resets \(reset.formatted(date: .abbreviated, time: .shortened))", to: menu)
-                } else {
-                    add("Reset time unavailable from local cache", to: menu)
-                }
-            } else {
-                add("\(name): unavailable", to: menu)
-            }
+                } else { add("Reset time unavailable from local cache", to: menu) }
+            } else { add("\(name): unavailable", to: menu) }
         }
 
         if let snapshot {
             add("\(snapshot.isCached ? "Claude sample" : "Updated") \(snapshot.fetchedAt.formatted(date: .abbreviated, time: .standard))", to: menu)
-            if snapshot.isStale { add("STALE — open Claude Settings → Usage", to: menu) }
+            if snapshot.isStale { add("STALE: open Claude Settings → Usage", to: menu) }
             if snapshot.weekly.normalizedRemaining == 0 && snapshot.fiveHour.normalizedRemaining > 0 {
-                add("Weekly limit exhausted — showing weekly", to: menu)
+                add("Weekly limit exhausted: showing weekly", to: menu)
             }
         }
-
         if let errorMessage { add("Refresh failed: \(errorMessage)", to: menu) }
         menu.addItem(.separator())
 
         let widthMenu = NSMenu()
-        for width in widths {
-            add("\(width) pt", to: widthMenu, action: #selector(changeWidth(_:)), tag: width, checked: width == gaugeWidth)
-        }
+        for width in widths { add("\(width) pt", to: widthMenu, action: #selector(changeWidth(_:)), tag: width, checked: width == gaugeWidth) }
         let widthItem = NSMenuItem(title: "Gauge width", action: nil, keyEquivalent: "")
         widthItem.submenu = widthMenu
         menu.addItem(widthItem)
@@ -230,12 +245,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(colorItem)
 
         let dataMenu = NSMenu()
-        if service == .chatGPT {
-            add("Live — existing ChatGPT/Codex session", to: dataMenu, action: #selector(changeDataMode(_:)), tag: 0, checked: !useMock)
-        }
-        if service == .claude {
-            add("Real percentages — desktop local cache", to: dataMenu, action: #selector(changeDataMode(_:)), tag: 0, checked: !useMock)
-        }
+        if service == .chatGPT { add("Live: existing ChatGPT/Codex session", to: dataMenu, action: #selector(changeDataMode(_:)), tag: 0, checked: !useMock) }
+        if service == .claude { add("Real percentages: desktop local cache", to: dataMenu, action: #selector(changeDataMode(_:)), tag: 0, checked: !useMock) }
         add("Mock (demo)", to: dataMenu, action: #selector(changeDataMode(_:)), tag: 1, checked: isMock)
         let dataItem = NSMenuItem(title: "Data source", action: nil, keyEquivalent: "")
         dataItem.submenu = dataMenu
@@ -252,12 +263,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for interval in intervals {
             add(interval < 60 ? "\(interval) seconds" : "\(interval / 60) minute\(interval == 60 ? "" : "s")", to: intervalMenu, action: #selector(changeInterval(_:)), tag: interval, checked: interval == refreshInterval)
         }
-        let intervalItem = NSMenuItem(title: "Refresh interval", action: nil, keyEquivalent: "")
+        let intervalItem = NSMenuItem(title: "Display refresh interval", action: nil, keyEquivalent: "")
         intervalItem.submenu = intervalMenu
         menu.addItem(intervalItem)
 
         add("Refresh now", to: menu, action: #selector(refreshNow))
-        add("Launch at login (coming soon)", to: menu)
+        add("Launch at login", to: menu, action: #selector(toggleStartup), checked: DesktopIntegration.startsAtLogin)
 
         let mockMenu = NSMenu()
         for (index, value) in MockUsageProvider.Scenario.allCases.enumerated() {
@@ -266,7 +277,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mockItem = NSMenuItem(title: "Mock scenarios", action: nil, keyEquivalent: "")
         mockItem.submenu = mockMenu
         if isMock { menu.addItem(mockItem) }
-
         menu.addItem(.separator())
         add("About UsageBar", to: menu, action: #selector(about))
         add("Quit UsageBar", to: menu, action: #selector(quit))
@@ -278,20 +288,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.set(gaugeWidth, forKey: "gaugeWidth")
         render()
     }
-
     @objc private func changeDisplay(_ sender: NSMenuItem) {
         showUsed = sender.tag == 1
         defaults.set(showUsed, forKey: "showUsed")
         render()
     }
-
     @objc private func changeInterval(_ sender: NSMenuItem) {
         refreshInterval = sender.tag
         defaults.set(refreshInterval, forKey: "refreshInterval")
         defaults.set(true, forKey: "fastRefreshConfigured")
         scheduleTimer()
+        render()
     }
-
     @objc private func changeScenario(_ sender: NSMenuItem) {
         refreshTask?.cancel()
         refreshTask = nil
@@ -299,7 +307,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selectProvider()
         refresh()
     }
-
     @objc private func changeService(_ sender: NSMenuItem) {
         refreshTask?.cancel()
         refreshTask = nil
@@ -312,13 +319,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
         refresh()
     }
-
     @objc private func changeColor(_ sender: NSMenuItem) {
         colorStyle = sender.tag
         defaults.set(colorStyle, forKey: "colorStyle")
         render()
     }
-
     @objc private func changeDataMode(_ sender: NSMenuItem) {
         refreshTask?.cancel()
         refreshTask = nil
@@ -330,23 +335,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
         refresh()
     }
+    @objc private func toggleStartup() {
+        do {
+            try DesktopIntegration.setStartsAtLogin(!DesktopIntegration.startsAtLogin)
+            if DesktopIntegration.requiresLoginApproval {
+                let alert = NSAlert()
+                alert.messageText = "Approval required"
+                alert.informativeText = "macOS requires approval before UsageBar can launch at login."
+                alert.addButton(withTitle: "Open Login Items")
+                alert.addButton(withTitle: "Later")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    DesktopIntegration.openLoginItemsSettings()
+                }
+            }
+            render()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not change startup setting"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    private func publishStatus(running: Bool = true) {
+        func allowance(_ value: UsageAllowance) -> [String: Any] {
+            ["remaining": value.normalizedRemaining * 100,
+             "resetsAt": value.resetsAt.map { $0.timeIntervalSince1970 as Any } ?? NSNull()]
+        }
+        var services: [String: Any] = [:]
+        for item in AIService.allCases {
+            var row: [String: Any] = ["error": readingErrors[item] ?? ""]
+            if let value = readings[item] {
+                row.merge(["fiveHour": allowance(value.fiveHour), "weekly": allowance(value.weekly),
+                           "sampleAt": value.fetchedAt.timeIntervalSince1970, "source": value.source,
+                           "cached": value.isCached, "stale": value.isStale], uniquingKeysWith: { _, new in new })
+            }
+            services[item.rawValue] = row
+        }
+        DesktopIntegration.writeStatus(["version": 1, "running": running, "pid": ProcessInfo.processInfo.processIdentifier,
+            "heartbeatAt": Date().timeIntervalSince1970, "services": services,
+            "settings": ["service": service.rawValue, "width": gaugeWidth, "color": colorStyle,
+                         "showUsed": showUsed, "interval": refreshInterval, "mock": useMock,
+                         "startup": DesktopIntegration.startsAtLogin]])
+    }
+
+    private func processCommand() {
+        guard let command = DesktopIntegration.takeCommand() else { return }
+        func item(_ tag: Int) -> NSMenuItem { let value = NSMenuItem(); value.tag = tag; return value }
+        if let name = command["service"] as? String, let value = AIService(rawValue: name),
+           let index = AIService.allCases.firstIndex(of: value) { changeService(item(index)) }
+        if let width = command["width"] as? Int, widths.contains(width) { changeWidth(item(width)) }
+        if let color = command["color"] as? Int, (0...2).contains(color) { changeColor(item(color)) }
+        if let used = command["showUsed"] as? Bool { changeDisplay(item(used ? 1 : 0)) }
+        if let interval = command["interval"] as? Int, intervals.contains(interval) { changeInterval(item(interval)) }
+        if let mock = command["mock"] as? Bool { changeDataMode(item(mock ? 1 : 0)) }
+        if let startup = command["startup"] as? Bool {
+            do { try DesktopIntegration.setStartsAtLogin(startup) }
+            catch { errorMessage = "Startup setting could not be saved." }
+        }
+        if command["action"] as? String == "refresh" { refreshNow() }
+        if command["action"] as? String == "quit" { quit() }
+        render()
+    }
 
     @objc private func about() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.icon = NSApp.applicationIconImage
-        alert.messageText = "UsageBar"
-        alert.informativeText = "Version 0.2.0\n\nA lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.\n\nMade by oaseas\n\nCurrently supports ChatGPT/Codex and Claude. UsageBar is an independent open-source project and is not affiliated with OpenAI or Anthropic.\n\nMIT License."
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.0"
+        alert.messageText = "UsageBar \(version)"
+        if let logo = Bundle.main.url(forResource: "UsageBarLogo", withExtension: "png"),
+           let image = NSImage(contentsOf: logo) {
+            alert.icon = image
+        } else {
+            alert.icon = NSApp.applicationIconImage
+        }
+        alert.informativeText = "Made by oaseas\n\nA lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.\n\nChatGPT shows the Codex allowance from your existing local session. Claude optionally reads cached percentages from Claude Desktop; Claude reset times are unavailable. No separate UsageBar account or AI model calls are required.\n\nUsageBar is independent software and is not affiliated with OpenAI or Anthropic.\n\nMIT License."
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "GitHub")
         alert.addButton(withTitle: "X @oaseas")
         let response = alert.runModal()
-        if response == .alertSecondButtonReturn, let url = URL(string: "https://github.com/oaseas/usagebar") {
+        if response == .alertSecondButtonReturn, let url = URL(string: "https://github.com/oaseas") {
             NSWorkspace.shared.open(url)
         } else if response == .alertThirdButtonReturn, let url = URL(string: "https://x.com/oaseas") {
             NSWorkspace.shared.open(url)
         }
     }
-
     @objc private func quit() { NSApp.terminate(nil) }
 }

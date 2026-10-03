@@ -1,100 +1,47 @@
 # Releasing UsageBar
 
-This document is for maintainers preparing a public macOS release.
+The repository includes two workflows:
 
-## Release goals
+- `macOS CI` validates every main-branch update and builds an ad-hoc signed Universal release candidate.
+- `Publish macOS Release` is triggered by a `release/vX.Y.Z` branch and publishes a GitHub Release after rebuilding and validating the app.
 
-A normal public binary should be:
+## Release validation
 
-- Built for both Apple Silicon and Intel Macs
-- Signed with a Developer ID Application certificate
-- Built with the hardened runtime
-- Notarized by Apple
-- Stapled with the notarization ticket
-- Packaged without account files, credentials, or local usage data
+Every release build must:
 
-## 1. Run the tests
+- pass `swift test`
+- contain both `arm64` and `x86_64`
+- target macOS 13 or later
+- include `AppIcon.icns`
+- include `UsageBarLogo.png`
+- pass `codesign --verify`
+- include a SHA-256 checksum
 
-```sh
-swift test
-```
+## Signing
 
-## 2. Build the Universal app
+Without release secrets, the workflow creates an ad-hoc signed build and labels the release accordingly.
 
-```sh
-./scripts/build-release.sh
-```
+For Developer ID signing, configure these repository secrets:
 
-Without a signing identity, the script creates an ad-hoc signed Universal build for testing.
+- `MACOS_CERTIFICATE_P12_BASE64`
+- `MACOS_CERTIFICATE_PASSWORD`
+- `MACOS_SIGN_IDENTITY`
 
-For public distribution, provide a Developer ID identity:
+For Apple notarization, also configure:
 
-```sh
-USAGEBAR_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build-release.sh
-```
+- `APPLE_ID`
+- `APPLE_TEAM_ID`
+- `APPLE_APP_PASSWORD`
 
-The script uses the permanent bundle identifier:
+If all signing and notarization values are available, the workflow imports the certificate into a temporary keychain, signs with the hardened runtime, submits the Universal ZIP to Apple, staples the ticket, validates with Gatekeeper, recreates the ZIP, and then publishes it.
 
-```text
-io.github.oaseas.usagebar
-```
+Signing certificates, passwords, Apple credentials, account files, and local provider data must never be committed to the repository.
 
-## 3. Verify the build
+## Manual checks before creating the release branch
 
-```sh
-lipo -archs dist/UsageBar.app/Contents/MacOS/UsageBar
-codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
-spctl --assess --type execute --verbose=4 dist/UsageBar.app
-```
+1. Confirm the latest `macOS CI` run on `main` is green.
+2. Review the README and release notes.
+3. Confirm the version in build scripts and release notes is consistent.
+4. Create `release/vX.Y.Z` from the tested main commit.
 
-The executable should contain both `arm64` and `x86_64` before public distribution.
-
-## 4. Notarize
-
-Apple notarization requires an Apple Developer Program account and a Developer ID Application certificate.
-
-Store notarization credentials in the macOS keychain rather than in this repository:
-
-```sh
-xcrun notarytool store-credentials "usagebar-notary"
-```
-
-Then submit the packaged release:
-
-```sh
-xcrun notarytool submit dist/UsageBar-0.2.0-macos-universal.zip \
-  --keychain-profile "usagebar-notary" \
-  --wait
-```
-
-Staple the ticket to the app:
-
-```sh
-xcrun stapler staple dist/UsageBar.app
-xcrun stapler validate dist/UsageBar.app
-```
-
-Recreate the ZIP after stapling so the downloadable copy contains the notarization ticket.
-
-## 5. Final safety check
-
-Before publishing, confirm that the release contains none of the following:
-
-- `.env` files
-- API keys
-- Authentication tokens
-- Browser cookies
-- Codex auth files
-- Claude usage-history files
-- Developer signing certificates or private keys
-- Personal absolute paths
-
-## 6. GitHub release
-
-Suggested first public tag:
-
-```text
-v0.2.0
-```
-
-Attach the notarized Universal ZIP and publish the release notes from `docs/RELEASE_NOTES_0.2.0.md`.
+The release workflow creates the Git tag and GitHub Release only after its own tests and Universal build checks pass.

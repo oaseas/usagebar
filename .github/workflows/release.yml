@@ -1,0 +1,137 @@
+name: Publish macOS Release
+
+on:
+  push:
+    branches:
+      - 'release/v*'
+
+concurrency:
+  group: usagebar-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#release/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        run: swift test
+
+      - name: Detect optional Developer ID credentials
+        id: signing
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -n "$CERT_P12" && -n "$CERT_PASSWORD" && -n "$SIGN_IDENTITY" ]]; then
+            echo "developer_id=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "developer_id=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_PASSWORD" ]]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.developer_id == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/usagebar.keychain-db"
+          PASSWORD="$(uuidgen)"
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/usagebar.p12"
+          security import "$RUNNER_TEMP/usagebar.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Build Universal app
+        env:
+          USAGEBAR_VERSION: ${{ steps.version.outputs.version }}
+          USAGEBAR_BUILD: 3
+          USAGEBAR_SIGN_IDENTITY: ${{ steps.signing.outputs.developer_id == 'true' && secrets.MACOS_SIGN_IDENTITY || '-' }}
+        run: ./scripts/build-release.sh
+
+      - name: Validate Universal app and resources
+        shell: bash
+        run: |
+          ARCHS="$(lipo -archs dist/UsageBar.app/Contents/MacOS/UsageBar)"
+          echo "Architectures: $ARCHS"
+          [[ "$ARCHS" == *arm64* ]]
+          [[ "$ARCHS" == *x86_64* ]]
+          codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
+          test -f dist/UsageBar.app/Contents/Resources/AppIcon.icns
+          test -f dist/UsageBar.app/Contents/Resources/UsageBarLogo.png
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' dist/UsageBar.app/Contents/Info.plist)" = "13.0"
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.developer_id == 'true' && steps.signing.outputs.notarize == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          xcrun notarytool submit "dist/UsageBar-${VERSION}-macos-universal.zip"             --apple-id "$APPLE_ID"             --team-id "$APPLE_TEAM_ID"             --password "$APPLE_APP_PASSWORD"             --wait
+          xcrun stapler staple dist/UsageBar.app
+          xcrun stapler validate dist/UsageBar.app
+          rm -f "dist/UsageBar-${VERSION}-macos-universal.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist/UsageBar.app "dist/UsageBar-${VERSION}-macos-universal.zip"
+          spctl --assess --type execute --verbose=4 dist/UsageBar.app
+
+      - name: Create checksum and release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.signing.outputs.developer_id }}
+          NOTARIZED: ${{ steps.signing.outputs.notarize }}
+        shell: bash
+        run: |
+          ZIP="dist/UsageBar-${VERSION}-macos-universal.zip"
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          cp "docs/RELEASE_NOTES_${VERSION}.md" dist/release-notes.md
+          {
+            echo
+            echo "## Signing"
+            if [[ "$SIGNED" == "true" && "$NOTARIZED" == "true" ]]; then
+              echo "This build is Developer ID signed and Apple-notarized."
+            elif [[ "$SIGNED" == "true" ]]; then
+              echo "This build is Developer ID signed but was not notarized by this workflow."
+            else
+              echo "This build is ad-hoc signed and not Apple-notarized. macOS may require manual approval the first time you open it. Do not disable Gatekeeper."
+            fi
+          } >> dist/release-notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          gh release create "$TAG"             "dist/UsageBar-${VERSION}-macos-universal.zip"             "dist/UsageBar-${VERSION}-macos-universal.zip.sha256"             --target "$GITHUB_SHA"             --title "UsageBar ${VERSION}"             --notes-file dist/release-notes.md

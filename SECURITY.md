@@ -13,8 +13,17 @@ Do not attach or paste:
 - Codex authentication files
 - Claude account files
 - `plan-usage-history.json`
+- Private companion dashboard files or session tokens
 
 For normal bug reports, the UsageBar version, macOS version, service name, visible error message, and a screenshot are usually enough.
+
+## Local companion bridge
+
+UsageBar's optional companion bridge is file-based and restricted to its Application Support directory for the current user.
+
+Commands are size-limited and must match a small whitelist of keys and actions. UsageBar itself does not expose an HTTP server or a network control endpoint.
+
+Any external companion dashboard is responsible for its own localhost binding, authentication, origin validation, and secure session handling.
 
 ## Reporting a security issue
 

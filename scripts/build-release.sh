@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP_VERSION="${USAGEBAR_VERSION:-0.2.0}"
-BUILD_NUMBER="${USAGEBAR_BUILD:-2}"
+APP_VERSION="${USAGEBAR_VERSION:-0.3.0}"
+BUILD_NUMBER="${USAGEBAR_BUILD:-3}"
 BUNDLE_ID="${USAGEBAR_BUNDLE_ID:-io.github.oaseas.usagebar}"
 SIGN_IDENTITY="${USAGEBAR_SIGN_IDENTITY:--}"
 APP="dist/UsageBar.app"
@@ -32,6 +32,7 @@ lipo -create "$ARM_BIN" "$INTEL_BIN" -output "$UNIVERSAL_BIN"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$UNIVERSAL_BIN" "$APP/Contents/MacOS/UsageBar"
 ./scripts/make-icon.sh "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/UsageBarLogo.png "$APP/Contents/Resources/UsageBarLogo.png"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -53,14 +54,23 @@ PLIST
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
   codesign --force --sign - "$APP"
-  echo "Created an ad-hoc signed Universal build for testing."
+  echo "Created an ad-hoc signed Universal build."
 else
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
   echo "Signed with Developer ID identity: $SIGN_IDENTITY"
 fi
 
 codesign --verify --deep --strict --verbose=2 "$APP"
-lipo -archs "$APP/Contents/MacOS/UsageBar"
+ARCHS="$(lipo -archs "$APP/Contents/MacOS/UsageBar")"
+echo "Architectures: $ARCHS"
+[[ "$ARCHS" == *"arm64"* && "$ARCHS" == *"x86_64"* ]]
+[[ -f "$APP/Contents/Resources/AppIcon.icns" ]]
+[[ -f "$APP/Contents/Resources/UsageBarLogo.png" ]]
+
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" | grep -Fx "$BUNDLE_ID"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" | grep -Fx "$APP_VERSION"
+/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist" | grep -Fx '13.0'
 
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-printf 'Built %s\n' "$ZIP"
+printf 'Built %s
+' "$ZIP"

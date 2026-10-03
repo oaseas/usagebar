@@ -32,7 +32,7 @@ UsageBar selects the `codex` rate-limit bucket and currently expects:
 
 `usedPercent` is converted into a remaining percentage, and `resetsAt` is converted from its Unix timestamp into a local date.
 
-UsageBar does not directly read or store Codex tokens, browser cookies, or passwords.
+UsageBar does not directly read or store Codex tokens, browser cookies, or passwords. Fetching rate-limit information does not start an AI model turn.
 
 Executable discovery checks:
 
@@ -70,23 +70,68 @@ Utilization is converted from used percentage to remaining percentage.
 
 The provider does not fabricate reset times because this local file does not contain them.
 
-The file format is not a public Anthropic API. UsageBar therefore fails clearly on unknown versions, invalid values, missing windows, or ambiguous histories containing multiple organization IDs.
+The file format is not a public Anthropic API. UsageBar fails clearly on unknown versions, invalid values, missing windows, or ambiguous histories containing multiple organization IDs.
 
-The decoded snapshot is cached until the file modification time changes, so frequent menu refreshes do not repeatedly parse an unchanged history file.
+The decoded snapshot is cached until the file modification time changes, so frequent menu redraws do not repeatedly parse an unchanged history file.
 
-## Refresh behavior
+## Display refresh versus provider fetching
 
-Refresh requests are asynchronous and ordinary polling does not overlap.
+The user-configurable interval controls how often UsageBar asks its current provider for a reading and refreshes the interface.
 
-The Codex provider keeps a single local helper process alive rather than creating a new process on every refresh. Repeated failures trigger exponential retry backoff up to 60 seconds.
+That does not mean a fresh upstream request occurs at the same rate.
 
-When UsageBar switches away from the live ChatGPT provider, the Codex helper is disconnected so it does not remain running unnecessarily.
+For Codex:
 
-Claude reads are local. If the usage-history file has not changed, the last decoded snapshot is reused.
+- one helper process is reused
+- normal successful readings are cached for 30 seconds
+- `Refresh now` explicitly invalidates that cache
+- overlapping app refresh tasks are prevented
+- errors apply exponential retry backoff up to 60 seconds
+
+For Claude:
+
+- the local history is re-decoded only when its file modification time changes
+- the upstream Claude Desktop cache can update much more slowly than the UsageBar display interval
+
+Secondary provider status used by the optional local companion bridge is refreshed no more than once every 30 seconds.
+
+## Launch at login
+
+UsageBar uses `SMAppService.mainApp` from Apple's Service Management framework on macOS 13 or later.
+
+The public bundle identifier is:
+
+```text
+io.github.oaseas.usagebar
+```
+
+No prototype LaunchAgent identifier or developer-specific machine path is used in the public implementation.
+
+Users should move the app to Applications before enabling Launch at login. macOS can require explicit approval in Login Items.
+
+## Optional local companion bridge
+
+`DesktopIntegration` writes status to:
+
+```text
+~/Library/Application Support/UsageBar/status.json
+```
+
+and accepts validated commands through:
+
+```text
+~/Library/Application Support/UsageBar/command.json
+```
+
+The Application Support directory is owner-only. Status is written owner-only. Commands must be regular files below the size limit, must contain valid JSON, and must use only whitelisted command keys and actions.
+
+UsageBar itself does not include an HTTP dashboard or network listener.
+
+See [COMPANION_BRIDGE.md](COMPANION_BRIDGE.md).
 
 ## Testing
 
-Logic tests currently cover:
+Logic tests cover:
 
 - Automatic weekly selection when the weekly allowance is exhausted
 - Safe percentage normalization
@@ -103,5 +148,7 @@ The live check commands are read-only with respect to AI usage and do not start 
 dist/UsageBar.app/Contents/MacOS/UsageBar --check-live
 dist/UsageBar.app/Contents/MacOS/UsageBar --check-claude
 ```
+
+CI also builds and verifies a Universal `arm64` and `x86_64` app bundle, checks the bundled icon and About logo, and verifies the code signature.
 
 Visual testing on Intel and Apple Silicon Macs, including notched displays and light/dark appearances, is still recommended before each public release.

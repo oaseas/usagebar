@@ -6,9 +6,30 @@
 
 <p align="center"><strong>A lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.</strong></p>
 
-UsageBar keeps your current allowance visible in the menu bar, so you do not have to keep opening account settings just to see how much you have left. It currently supports ChatGPT/Codex and Claude, with room to add more AI services over time.
+UsageBar keeps your current allowance visible in the macOS menu bar, so you do not have to keep opening account settings just to see how much you have left.
 
-It is native, lightweight, local-first, and intentionally simple.
+It currently supports ChatGPT/Codex and Claude, with room to add more AI services over time. It is native, lightweight, local-first, and intentionally simple.
+
+## Download
+
+Get the latest build from [GitHub Releases](https://github.com/oaseas/usagebar/releases/latest).
+
+Installation is intentionally simple:
+
+1. Download the Universal macOS ZIP.
+2. Unzip it.
+3. Move `UsageBar.app` to your Applications folder.
+4. Open UsageBar.
+
+The Universal build supports Intel and Apple Silicon Macs and targets macOS 13 or later.
+
+Claude is optional. You can use UsageBar with ChatGPT/Codex only.
+
+### macOS security
+
+The release page clearly states whether a build is Developer ID signed and notarized or ad-hoc signed.
+
+If an ad-hoc build is blocked on first launch, try opening it normally once, then go to **System Settings > Privacy & Security** and use **Open Anyway** for UsageBar. This is Apple's normal manual approval path for software that is not notarized. You should not disable Gatekeeper.
 
 ## Why I made this
 
@@ -38,72 +59,103 @@ You can also switch the app to Claude and view the latest usage percentages stor
 
 - Native Swift and AppKit macOS app
 - No Electron
-- No third-party dependencies
+- No third-party runtime dependencies
 - Wide configurable menu bar gauge
-- ChatGPT and Claude support
-- 5-hour and weekly ChatGPT views
-- Left-click to switch between ChatGPT usage windows
+- ChatGPT/Codex and optional Claude support
+- 5-hour and weekly views
+- Left-click to switch usage windows
 - Remaining or used percentage display
 - 120, 180, 260, and 320 point gauge widths
 - Monochrome, blue, or capacity-based color styles
-- Automatic and manual refresh
-- Refresh intervals from 1 second to 15 minutes
-- Small service badges for ChatGPT and Claude
+- Configurable display refresh interval
+- Working Launch at login support through macOS Service Management
+- Optional private local status/control bridge for trusted same-user companion tools
 - Mock mode for testing
 - No Dock icon
 
 ## Where the numbers come from
 
-UsageBar does not estimate your allowance from message counts.
+UsageBar does not estimate your allowance from message counts and it does not make AI model calls.
 
 ### ChatGPT
 
-UsageBar reads the Codex allowance from the local Codex app server associated with the ChatGPT account already signed in on your Mac.
+UsageBar reads the **Codex allowance** from the local Codex app server associated with the ChatGPT account already signed in on your Mac.
 
 It displays the 5-hour and weekly Codex windows returned for that account, including reset times when available.
 
 **Important:** this is the Codex allowance. It is not a claim to measure every ChatGPT model, feature, or message cap.
 
+No separate UsageBar account is required.
+
 ### Claude
 
-UsageBar reads the percentages Claude Desktop stores locally in its usage history file.
+Claude support is optional.
 
-Claude's local data is cached rather than a live UsageBar network request. It can update less frequently than the ChatGPT reading, and reset times are not stored in this file. UsageBar shows the sample time and marks old readings as stale instead of inventing missing information.
+UsageBar reads the percentages Claude Desktop stores locally in its usage history file. This is cached desktop data, not a direct UsageBar server connection.
+
+Claude reset times are not available from this local cache, so UsageBar does not invent them. The app shows the actual sample time and marks old readings as stale.
 
 The Claude cache format is not a public Anthropic API and may change in a future Claude Desktop update.
 
 More technical detail is available in [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
-## Installation
+## Refreshing and resource use
 
-Public builds will be available from the GitHub Releases page.
+The menu bar can redraw more often than UsageBar actually asks a provider for new data.
 
-1. Download the latest `UsageBar` release.
-2. Move `UsageBar.app` to your Applications folder.
-3. Open UsageBar.
-4. Keep ChatGPT/Codex or Claude signed in normally, depending on which service you want to monitor.
+For ChatGPT/Codex:
 
-No separate UsageBar account is required.
+- one persistent local Codex helper is reused instead of launching a new process for every refresh
+- ordinary Codex usage reads are cached for 30 seconds
+- **Refresh now** bypasses that cache
+- overlapping refresh work is prevented
+- errors trigger exponential retry backoff up to 60 seconds
 
-### macOS security
+For Claude:
 
-For a normal public release, the app should be signed with a Developer ID certificate and notarized by Apple.
+- the local history file is only decoded again when its modification time changes
+- Claude itself writes new samples less frequently than the fastest UsageBar display interval
 
-Development and early test builds may use ad-hoc signing. macOS can show additional security warnings for those builds.
+This means choosing a 1-second display refresh does not create one new Codex network request per second.
 
-See [docs/RELEASING.md](docs/RELEASING.md) for the release process.
+## Launch at login
+
+UsageBar uses Apple's Service Management framework on macOS 13 and later.
+
+For the most reliable setup:
+
+1. Move `UsageBar.app` to your Applications folder first.
+2. Open UsageBar.
+3. Right-click the gauge and enable **Launch at login**.
+
+macOS may require approval in **System Settings > General > Login Items & Extensions**. UsageBar can open that settings page when approval is needed.
+
+If you move the app after enabling Launch at login, disable and enable the setting again from the app.
+
+## Optional local companion bridge
+
+UsageBar can expose a small local file bridge for trusted same-user companion dashboards such as Endeavor.
+
+The bridge uses:
+
+- `~/Library/Application Support/UsageBar/status.json` for read-only status
+- `~/Library/Application Support/UsageBar/command.json` for a small whitelist of local commands
+
+The Application Support directory is restricted to the current user. Status files are written with owner-only permissions. Commands are size-limited, parsed as JSON, and only accepted when their keys and actions match UsageBar's whitelist.
+
+UsageBar does **not** include or publish a private Endeavor dashboard, web server, session token, personal machine path, or private dashboard data.
+
+A companion web dashboard is responsible for its own localhost binding, authentication, and same-origin protections. See [docs/COMPANION_BRIDGE.md](docs/COMPANION_BRIDGE.md).
 
 ## How to use it
 
 Once UsageBar is running, the gauge appears directly in the menu bar.
 
-Example:
-
 ```text
 G  5H R  ████████████████░░░░  78%
 ```
 
-Left-click to switch to the weekly view:
+Left-click to switch to weekly usage:
 
 ```text
 G  7D R  █████░░░░░░░░░░░░░░░  25%
@@ -116,8 +168,9 @@ Right-click the gauge to access:
 - Remaining or used display
 - Gauge color
 - Data source
-- Refresh interval
+- Display refresh interval
 - Refresh now
+- Launch at login
 - About
 - Quit
 
@@ -133,13 +186,11 @@ See [PRIVACY.md](PRIVACY.md) for the full explanation.
 
 ## Current limitations
 
-UsageBar is still a small early project.
-
 - ChatGPT values currently represent the Codex allowance, not every ChatGPT usage limit.
 - Claude values come from an undocumented local cache and can become stale.
-- Claude reset times are not available from that cache.
-- Claude histories containing multiple organization IDs are currently treated as ambiguous instead of guessing which account to show.
-- Launch at login is shown as a placeholder and is not implemented yet.
+- Claude reset times are unavailable from that cache.
+- Claude histories containing multiple organization IDs are treated as ambiguous instead of guessing which account to show.
+- Launch at login uses macOS Service Management and still depends on user approval where macOS requires it.
 - Menu bar placement is controlled by macOS. A very wide gauge may be hidden by long app menus or a display notch.
 
 ## Building from source
@@ -159,7 +210,11 @@ Run the logic tests with:
 swift test
 ```
 
-A release helper for a Universal macOS build is included in `scripts/build-release.sh`.
+Build the Universal release candidate with:
+
+```sh
+./scripts/build-release.sh
+```
 
 ## Contributing
 

@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: macos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -13,7 +17,7 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Show Swift version
         run: swift --version
@@ -24,15 +28,32 @@ jobs:
       - name: Build local app bundle
         run: ./scripts/build-app.sh
 
-      - name: Verify app signature
-        run: codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
+      - name: Verify local app signature and resources
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
+          test -f dist/UsageBar.app/Contents/Resources/AppIcon.icns
+          test -f dist/UsageBar.app/Contents/Resources/UsageBarLogo.png
 
       - name: Build Universal release candidate
         run: ./scripts/build-release.sh
 
-      - name: Verify Universal architectures
+      - name: Verify Universal release candidate
         run: |
           ARCHS="$(lipo -archs dist/UsageBar.app/Contents/MacOS/UsageBar)"
           echo "$ARCHS"
           [[ "$ARCHS" == *arm64* ]]
           [[ "$ARCHS" == *x86_64* ]]
+          codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
+          test -f dist/UsageBar.app/Contents/Resources/AppIcon.icns
+          test -f dist/UsageBar.app/Contents/Resources/UsageBarLogo.png
+          shasum -a 256 dist/UsageBar-0.3.0-macos-universal.zip > dist/UsageBar-0.3.0-macos-universal.zip.sha256
+
+      - name: Upload Universal release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: UsageBar-0.3.0-macos-universal
+          path: |
+            dist/UsageBar-0.3.0-macos-universal.zip
+            dist/UsageBar-0.3.0-macos-universal.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

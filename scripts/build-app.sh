@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP_VERSION="${USAGEBAR_VERSION:-0.2.0}"
-BUILD_NUMBER="${USAGEBAR_BUILD:-2}"
+APP_VERSION="${USAGEBAR_VERSION:-0.3.0}"
+BUILD_NUMBER="${USAGEBAR_BUILD:-3}"
 BUNDLE_ID="${USAGEBAR_BUNDLE_ID:-io.github.oaseas.usagebar}"
 
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/module-cache"
@@ -17,6 +17,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/UsageBar" "$APP/Contents/MacOS/UsageBar"
 ./scripts/make-icon.sh "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/UsageBarLogo.png "$APP/Contents/Resources/UsageBarLogo.png"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,4 +38,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 codesign --force --sign - "$APP"
-printf 'Built %s/%s\n' "$PWD" "$APP"
+codesign --verify --deep --strict "$APP"
+printf 'Built %s/%s
+' "$PWD" "$APP"

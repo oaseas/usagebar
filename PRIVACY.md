@@ -35,20 +35,33 @@ UsageBar does not:
 - Sell your data
 - Upload your usage history to a UsageBar server
 - Include advertising trackers
+- Make AI model calls to obtain the displayed allowance
 - Ask you to send your ChatGPT or Claude password to the developer
 - Store copies of your conversation history
 
+No separate UsageBar account is required.
+
 ## ChatGPT authentication
 
-UsageBar starts a local Codex app-server helper and asks it for rate-limit information. Codex remains responsible for its own authentication.
+UsageBar starts one local Codex app-server helper and asks it for rate-limit information. Codex remains responsible for its own authentication.
 
 UsageBar does not parse or copy Codex authentication files.
 
 ## Claude local cache
 
+Claude support is optional.
+
 UsageBar reads only the local usage history file needed to obtain Claude's cached usage percentages. The file is read-only from UsageBar's perspective.
 
-The Claude file format is not a public Anthropic API and may change.
+The Claude file format is not a public Anthropic API and may change. Claude reset times are not available from this file.
+
+## Optional local companion bridge
+
+UsageBar can write non-sensitive status information to its own Application Support folder and accept a small whitelist of commands from a trusted local companion running as the same macOS user.
+
+The bridge does not publish a web server, session token, private dashboard, prompts, conversations, or provider credentials.
+
+See [docs/COMPANION_BRIDGE.md](docs/COMPANION_BRIDGE.md) for the public schema and validation rules.
 
 ## Analytics
 
@@ -58,6 +71,6 @@ If this changes in a future release, this document should be updated clearly bef
 
 ## Reporting problems safely
 
-Please do not include passwords, tokens, cookies, account files, or local usage-history files when opening an issue.
+Please do not include passwords, tokens, cookies, account files, local usage-history files, or private companion dashboard files when opening an issue.
 
-A screenshot of the gauge and the exact error message are usually enough to start troubleshooting.
+A screenshot of the gauge and the exact visible error message are usually enough to start troubleshooting.

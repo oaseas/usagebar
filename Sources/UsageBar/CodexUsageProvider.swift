@@ -15,10 +15,13 @@ actor CodexUsageProvider: UsageProvider {
     private var timeoutTasks: [Int: Task<Void, Never>] = [:]
     private var connectionID = 0
     private var initialized = false
+    private var lastReading: UsageSnapshot?
+    func invalidateCache() { lastReading = nil; retryAfter = .distantPast }
     private var failures = 0
     private var retryAfter = Date.distantPast
 
     func fetchUsage() async throws -> UsageSnapshot {
+        if let lastReading, Date().timeIntervalSince(lastReading.fetchedAt) < 30 { return lastReading }
         guard Date() >= retryAfter else {
             throw UsageProviderError(message: "Connection paused after an error; retrying shortly.")
         }
@@ -27,6 +30,7 @@ actor CodexUsageProvider: UsageProvider {
             let data = try await request(method: "account/rateLimits/read")
             let value = try Self.decode(data)
             failures = 0
+            lastReading = value
             return value
         } catch {
             failures += 1
@@ -68,7 +72,7 @@ actor CodexUsageProvider: UsageProvider {
             disconnect()
             throw UsageProviderError(message: "Could not start the local Codex helper.")
         }
-        let params: [String: Any] = ["clientInfo": ["name": "usagebar", "title": "UsageBar", "version": "0.2.0"]]
+        let params: [String: Any] = ["clientInfo": ["name": "usagebar", "title": "UsageBar", "version": "0.3.0"]]
         let encoded = try JSONSerialization.data(withJSONObject: params)
         _ = try await request(method: "initialize", params: encoded)
         try write(["method": "initialized", "params": [:]])
@@ -112,6 +116,7 @@ actor CodexUsageProvider: UsageProvider {
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                   let id = object["id"] as? Int, pending[id] != nil else { continue }
             if object["error"] != nil {
+                // Do not display upstream bodies, which could contain account details.
                 finish(id, result: .failure(UsageProviderError(message: "Usage unavailable. Check that ChatGPT/Codex is signed in with your ChatGPT account.")))
             } else if let result = object["result"], let encoded = try? JSONSerialization.data(withJSONObject: result) {
                 finish(id, result: .success(encoded))
@@ -124,12 +129,10 @@ actor CodexUsageProvider: UsageProvider {
     private func timeout(_ id: Int) {
         finish(id, result: .failure(UsageProviderError(message: "Usage request timed out. Try Refresh now.")))
     }
-
     private func finish(_ id: Int, result: Result<Data, any Error>) {
         timeoutTasks.removeValue(forKey: id)?.cancel()
         pending.removeValue(forKey: id)?.resume(with: result)
     }
-
     func disconnect() {
         connectionID += 1
         initialized = false
@@ -149,6 +152,7 @@ actor CodexUsageProvider: UsageProvider {
         struct Bucket: Decodable { let limitId: String?; let primary: Window?; let secondary: Window? }
         struct Response: Decodable { let rateLimits: Bucket?; let rateLimitsByLimitId: [String: Bucket]? }
         let response = try JSONDecoder().decode(Response.self, from: data)
+        // Never substitute an unrelated model bucket or fabricate a missing allowance.
         let bucket = response.rateLimitsByLimitId?["codex"] ?? response.rateLimits
         guard let bucket, bucket.limitId == nil || bucket.limitId == "codex" else {
             throw UsageProviderError(message: "The Codex allowance bucket is unavailable.")
@@ -158,19 +162,12 @@ actor CodexUsageProvider: UsageProvider {
               let weekly = windows.first(where: { $0.windowDurationMins == 10080 }) else {
             throw UsageProviderError(message: "This account did not return both 5-hour and weekly limits.")
         }
-
         func allowance(_ window: Window) throws -> UsageAllowance {
             guard window.usedPercent.isFinite, (0...100).contains(window.usedPercent), window.resetsAt.isFinite, window.resetsAt > 0 else {
                 throw UsageProviderError(message: "Invalid usage data received.")
             }
             return UsageAllowance(remaining: 1 - window.usedPercent / 100, resetsAt: Date(timeIntervalSince1970: window.resetsAt))
         }
-
-        return try UsageSnapshot(
-            fiveHour: allowance(five),
-            weekly: allowance(weekly),
-            fetchedAt: Date(),
-            source: "Live ChatGPT account · Codex allowance"
-        )
+        return try UsageSnapshot(fiveHour: allowance(five), weekly: allowance(weekly), fetchedAt: Date(), source: "Live ChatGPT account · Codex allowance")
     }
 }
