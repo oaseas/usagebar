@@ -49,7 +49,7 @@ If it happens to be useful to you too, that already makes publishing it worthwhi
 
 UsageBar puts a horizontal usage gauge directly in the macOS menu bar.
 
-For ChatGPT, the default view shows the current 5-hour Codex allowance. Left-click the gauge to switch between the 5-hour and weekly views.
+For ChatGPT, the default view shows the current 5-hour Codex allowance. At 120 and 180 pt, left-click switches between the 5-hour and weekly views. At 260 pt and wider, it cycles through 5-hour, weekly, both gauges side by side, and 5-hour with a reset countdown.
 
 If the weekly allowance reaches zero while the current 5-hour window still has capacity, UsageBar automatically shows the weekly limit so the menu bar reflects the limit that is actually blocking you.
 
@@ -65,7 +65,7 @@ You can also switch the app to Claude and view the latest usage percentages stor
 - 5-hour and weekly views
 - Left-click to switch usage windows
 - Remaining or used percentage display
-- 120, 180, 260, and 320 point gauge widths
+- 120, 180, 260, 320, and 400 point gauge widths
 - Monochrome, blue, or capacity-based color styles
 - Configurable display refresh interval
 - Working Launch at login support through macOS Service Management
@@ -241,3 +241,7 @@ ChatGPT and OpenAI are trademarks of OpenAI. Claude and Anthropic are trademarks
 ## License
 
 UsageBar is available under the MIT License. See [LICENSE](LICENSE).
+
+### Wide layouts and countdown
+
+At 260 pt and above, click through 5H → 7D → both gauges → 5H + HH:MM:SS countdown. The countdown uses native monospaced system digits and matches the gauge color. It redraws locally once per second only in that view; provider polling is unchanged. Missing reset times show `--:--:--`; a due reset stays at `00:00:00` until the provider reports a new time. The exhausted weekly allowance still takes priority.

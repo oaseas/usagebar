@@ -16,12 +16,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controlTimer: Timer?
     private var snapshot: UsageSnapshot?
     private var errorMessage: String?
-    private var requestedWindow: UsageWindow = .fiveHour
+    private var layout: GaugeLayout = .fiveHour
+    private var countdownTimer: Timer?
     private var service: AIService = .chatGPT
     private var scenario: MockUsageProvider.Scenario = .normal
     private var provider: any UsageProvider = MockUsageProvider(scenario: .normal)
     private let defaults = UserDefaults.standard
-    private let widths = [120, 180, 260, 320]
+    private let widths = [120, 180, 260, 320, 400]
     private let intervals = [1, 5, 10, 30, 60, 300, 900]
     private var gaugeWidth: Int = 260
     private var refreshInterval: Int = 5
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if widths.contains(savedWidth) { gaugeWidth = savedWidth }
         let savedInterval = defaults.integer(forKey: "refreshInterval")
         if defaults.bool(forKey: "fastRefreshConfigured"), intervals.contains(savedInterval) { refreshInterval = savedInterval }
+        layout = (GaugeLayout(rawValue: defaults.integer(forKey: "gaugeLayout")) ?? .fiveHour).fitted(width: gaugeWidth)
         showUsed = defaults.bool(forKey: "showUsed")
         statusItem = NSStatusBar.system.statusItem(withLength: CGFloat(gaugeWidth))
         if let button = statusItem.button {
@@ -65,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         controlTimer?.invalidate()
+        countdownTimer?.invalidate()
         publishStatus(running: false)
         refreshTask?.cancel()
         Task { await liveProvider.disconnect() }
@@ -77,7 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
         } else {
-            requestedWindow = requestedWindow == .fiveHour ? .weekly : .fiveHour
+            layout = layout.next(width: gaugeWidth)
+            defaults.set(layout.rawValue, forKey: "gaugeLayout")
             render()
         }
     }
@@ -137,52 +141,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func render() {
-        publishStatus()
+    private func updateCountdownTimer(active: Bool) {
+        if !active { countdownTimer?.invalidate(); countdownTimer = nil; return }
+        guard countdownTimer == nil else { return }
+        let tick = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.render(publish: false) }
+        }
+        tick.tolerance = 0.1
+        RunLoop.main.add(tick, forMode: .common)
+        countdownTimer = tick
+    }
+
+    private func render(publish: Bool = true) {
+        if publish { publishStatus() }
         guard let button = statusItem.button else { return }
-        let window = snapshot?.effectiveWindow(requested: requestedWindow) ?? requestedWindow
-        let fraction = snapshot?[window].fraction(showUsed: showUsed)
-        let percentage = fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "N/A"
-        let label = window.label + (showUsed ? " U" : " R")
+        let forced = snapshot?.effectiveWindow(requested: .fiveHour) == .weekly
+        let selected = layout.fitted(width: gaugeWidth)
+        let effective: GaugeLayout = forced ? .weekly : selected
+        updateCountdownTimer(active: effective == .countdown && snapshot?.fiveHour.resetsAt != nil)
         let image = NSImage(size: NSSize(width: CGFloat(gaugeWidth), height: 22))
         image.lockFocus()
         button.effectiveAppearance.performAsCurrentDrawingAppearance {
-        let ink = colorStyle == 0 ? NSColor.black : NSColor.labelColor
-        let textAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
-            .foregroundColor: ink
-        ]
-        let badgeAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 8, weight: .semibold), .foregroundColor: ink]
-        ink.withAlphaComponent(0.4).setStroke()
-        NSBezierPath(roundedRect: NSRect(x: 5, y: 5, width: 13, height: 12), xRadius: 3, yRadius: 3).stroke()
-        ((service == .chatGPT ? "G" : "C") as NSString).draw(at: NSPoint(x: 8, y: 6), withAttributes: badgeAttributes)
-        (label as NSString).draw(at: NSPoint(x: 23, y: 5), withAttributes: textAttributes)
-        let percentSize = (percentage as NSString).size(withAttributes: textAttributes)
-        (percentage as NSString).draw(at: NSPoint(x: CGFloat(gaugeWidth) - percentSize.width - 7, y: 5), withAttributes: textAttributes)
-        let bar = NSRect(x: 61, y: 7, width: CGFloat(gaugeWidth) - 102, height: 8)
-        let capacityColor = NSColor(calibratedHue: CGFloat((snapshot?[window].normalizedRemaining ?? 0) / 3), saturation: 0.85, brightness: 0.8, alpha: 1)
-        (colorStyle == 2 ? capacityColor : ink).withAlphaComponent(0.22).setFill()
-        NSBezierPath(roundedRect: bar, xRadius: 3, yRadius: 3).fill()
-        if let fraction, fraction > 0 {
-            let remaining = snapshot?[window].normalizedRemaining ?? 0
-            let fillColor: NSColor = colorStyle == 0 ? .black : colorStyle == 1 ? .systemBlue : NSColor(calibratedHue: CGFloat(remaining / 3), saturation: 0.85, brightness: 0.8, alpha: 1)
-            fillColor.setFill()
-            let fill = NSRect(x: bar.minX, y: bar.minY, width: bar.width * fraction, height: bar.height)
-            NSBezierPath(roundedRect: fill, xRadius: min(3, fill.width / 2), yRadius: 3).fill()
-        }
-        if errorMessage != nil || snapshot?.isStale == true {
-            ink.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 1, y: 9, width: 3, height: 3)).fill()
-        }
+            let ink: NSColor = colorStyle == 0 ? .black : .labelColor
+            let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+            @MainActor func color(_ window: UsageWindow) -> NSColor {
+                if colorStyle == 0 { return .black }
+                if colorStyle == 1 { return .systemBlue }
+                return NSColor(calibratedHue: CGFloat((snapshot?[window].normalizedRemaining ?? 0) / 3), saturation: 0.85, brightness: 0.8, alpha: 1)
+            }
+            func text(_ value: String, x: CGFloat, color: NSColor? = nil, font: NSFont? = nil) {
+                (value as NSString).draw(at: NSPoint(x: x, y: 5), withAttributes: [.font: font ?? NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium), .foregroundColor: color ?? ink])
+            }
+            @MainActor func gauge(_ window: UsageWindow, x: CGFloat, width: CGFloat) {
+                let fraction = snapshot?[window].fraction(showUsed: showUsed)
+                let percent = fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "N/A"
+                let percentWidth = (percent as NSString).size(withAttributes: [.font: font]).width
+                text(window.label + (showUsed ? " U" : " R"), x: x)
+                text(percent, x: x + width - percentWidth)
+                let bar = NSRect(x: x + 38, y: 7, width: max(8, width - 44 - percentWidth), height: 8)
+                color(window).withAlphaComponent(0.22).setFill()
+                NSBezierPath(roundedRect: bar, xRadius: 4, yRadius: 4).fill()
+                if let fraction, fraction > 0 {
+                    color(window).setFill()
+                    let fill = NSRect(x: bar.minX, y: bar.minY, width: bar.width * fraction, height: bar.height)
+                    NSBezierPath(roundedRect: fill, xRadius: min(4, fill.width / 2), yRadius: 4).fill()
+                }
+            }
+            ink.withAlphaComponent(0.4).setStroke()
+            NSBezierPath(roundedRect: NSRect(x: 5, y: 5, width: 13, height: 12), xRadius: 3, yRadius: 3).stroke()
+            text(service == .chatGPT ? "G" : "C", x: 8, font: NSFont.systemFont(ofSize: 8, weight: .semibold))
+            let width = CGFloat(gaugeWidth)
+            switch effective {
+            case .fiveHour, .weekly:
+                gauge(effective == .weekly ? .weekly : .fiveHour, x: 23, width: width - 30)
+            case .both:
+                let half = (width - 46) / 2
+                gauge(.fiveHour, x: 23, width: half)
+                gauge(.weekly, x: 39 + half, width: half)
+            case .countdown:
+                let digits = GaugeLayout.countdownText(reset: snapshot?.fiveHour.resetsAt)
+                let timerFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+                let timerText = "↻ " + digits
+                let timerWidth = (timerText as NSString).size(withAttributes: [.font: timerFont]).width
+                gauge(.fiveHour, x: 23, width: width - timerWidth - 46)
+                text(timerText, x: width - timerWidth - 7, color: color(.fiveHour), font: timerFont)
+            }
+            if errorMessage != nil || snapshot?.isStale == true {
+                ink.setFill()
+                NSBezierPath(ovalIn: NSRect(x: 1, y: 9, width: 3, height: 3)).fill()
+            }
         }
         image.unlockFocus()
         image.isTemplate = colorStyle == 0
         statusItem.length = CGFloat(gaugeWidth)
         button.image = image
         let mode = showUsed ? "used" : "remaining"
-        let forced = snapshot?.effectiveWindow(requested: .fiveHour) == .weekly
-        let detail = "\(window == .fiveHour ? "5-hour" : "Weekly") usage: \(percentage) \(mode). \(snapshot?.source ?? (isMock ? "Mock data" : "Live data pending"))."
-        button.toolTip = detail + (snapshot?.isStale == true ? " Cached reading is over 10 minutes old. Open Claude Settings → Usage to update it." : "") + (forced ? " Weekly limit exhausted." : "") + (errorMessage.map { " Last refresh failed: \($0)" } ?? "") + " Left-click to toggle; right-click for settings."
+        @MainActor func reading(_ w: UsageWindow) -> String {
+            let percent = snapshot.map { "\(Int(($0[w].fraction(showUsed: showUsed) * 100).rounded()))%" } ?? "unavailable"
+            return "\(w.label): \(percent) \(mode)"
+        }
+        var detail = effective == .both ? reading(.fiveHour) + "; " + reading(.weekly) : reading(effective == .weekly ? .weekly : .fiveHour)
+        if effective == .countdown {
+            detail += "; 5-hour reset countdown " + GaugeLayout.countdownText(reset: snapshot?.fiveHour.resetsAt)
+            if let reset = snapshot?.fiveHour.resetsAt, reset <= Date() { detail += ". Reset due; awaiting a provider update." }
+            if snapshot?.fiveHour.resetsAt == nil { detail += ". Reset time unavailable." }
+        }
+        detail += ". " + (snapshot?.source ?? "Waiting for data")
+        button.toolTip = detail + (forced ? ". Weekly limit exhausted." : "") + (errorMessage.map { ". Refresh failed: \($0)" } ?? "") + ". Left-click cycles views; right-click opens settings."
         button.setAccessibilityLabel("UsageBar, " + detail)
     }
 
@@ -285,6 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func changeWidth(_ sender: NSMenuItem) {
         gaugeWidth = sender.tag
+        layout = layout.fitted(width: gaugeWidth)
+        defaults.set(layout.rawValue, forKey: "gaugeLayout")
         defaults.set(gaugeWidth, forKey: "gaugeWidth")
         render()
     }
@@ -312,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTask = nil
         snapshot = nil
         errorMessage = nil
-        requestedWindow = .fiveHour
+        layout = .fiveHour
         service = AIService.allCases[sender.tag]
         defaults.set(service.rawValue, forKey: "service")
         selectProvider()
@@ -375,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DesktopIntegration.writeStatus(["version": 1, "running": running, "pid": ProcessInfo.processInfo.processIdentifier,
             "heartbeatAt": Date().timeIntervalSince1970, "services": services,
             "settings": ["service": service.rawValue, "width": gaugeWidth, "color": colorStyle,
-                         "showUsed": showUsed, "interval": refreshInterval, "mock": useMock,
+                         "layout": layout.rawValue, "showUsed": showUsed, "interval": refreshInterval, "mock": useMock,
                          "startup": DesktopIntegration.startsAtLogin]])
     }
 

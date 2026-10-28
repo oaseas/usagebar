@@ -7,7 +7,7 @@ BUILD_NUMBER="${USAGEBAR_BUILD:-3}"
 BUNDLE_ID="${USAGEBAR_BUNDLE_ID:-io.github.oaseas.usagebar}"
 
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/module-cache"
-SWIFT_ARGS=(--disable-sandbox --cache-path "$PWD/.build/cache" -Xswiftc -module-cache-path -Xswiftc "$PWD/.build/module-cache")
+SWIFT_ARGS=(--jobs 2 --disable-sandbox --cache-path "$PWD/.build/cache" -Xswiftc -module-cache-path -Xswiftc "$PWD/.build/module-cache")
 
 swift build -c release "${SWIFT_ARGS[@]}"
 BIN_DIR="$(swift build -c release "${SWIFT_ARGS[@]}" --show-bin-path)"
