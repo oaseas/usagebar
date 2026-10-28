@@ -3,6 +3,15 @@ import Foundation
 enum GaugeLayout: Int, CaseIterable, Sendable {
     case fiveHour, weekly, both, countdown
 
+    var title: String {
+        switch self {
+        case .fiveHour: "5-hour gauge"
+        case .weekly: "Weekly gauge"
+        case .both: "5-hour + weekly gauges"
+        case .countdown: "5-hour gauge + countdown"
+        }
+    }
+
     func next(width: Int) -> GaugeLayout {
         let count = width >= 260 ? 4 : 2
         return GaugeLayout(rawValue: (rawValue + 1) % count) ?? .fiveHour

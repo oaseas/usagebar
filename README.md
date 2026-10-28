@@ -245,3 +245,5 @@ UsageBar is available under the MIT License. See [LICENSE](LICENSE).
 ### Wide layouts and countdown
 
 At 260 pt and above, click through 5H → 7D → both gauges → 5H + HH:MM:SS countdown. The countdown uses native monospaced system digits and matches the gauge color. It redraws locally once per second only in that view; provider polling is unchanged. Missing reset times show `--:--:--`; a due reset stays at `00:00:00` until the provider reports a new time. The exhausted weekly allowance still takes priority.
+
+Right-click **View** to select a layout directly. **Default view** saves a startup layout and applies it immediately; clicking through views does not change that default. Combined layouts require 260 pt or wider. A saved wide default falls back to 5H when opening at a narrow width.

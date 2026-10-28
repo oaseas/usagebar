@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var snapshot: UsageSnapshot?
     private var errorMessage: String?
     private var layout: GaugeLayout = .fiveHour
+    private var defaultLayout: GaugeLayout = .fiveHour
     private var countdownTimer: Timer?
     private var service: AIService = .chatGPT
     private var scenario: MockUsageProvider.Scenario = .normal
@@ -44,7 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if widths.contains(savedWidth) { gaugeWidth = savedWidth }
         let savedInterval = defaults.integer(forKey: "refreshInterval")
         if defaults.bool(forKey: "fastRefreshConfigured"), intervals.contains(savedInterval) { refreshInterval = savedInterval }
-        layout = (GaugeLayout(rawValue: defaults.integer(forKey: "gaugeLayout")) ?? .fiveHour).fitted(width: gaugeWidth)
+        let startupKey = defaults.object(forKey: "defaultGaugeLayout") == nil ? "gaugeLayout" : "defaultGaugeLayout"
+        defaultLayout = GaugeLayout(rawValue: defaults.integer(forKey: startupKey)) ?? .fiveHour
+        layout = defaultLayout.fitted(width: gaugeWidth)
         showUsed = defaults.bool(forKey: "showUsed")
         statusItem = NSStatusBar.system.statusItem(withLength: CGFloat(gaugeWidth))
         if let button = statusItem.button {
@@ -275,6 +278,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let errorMessage { add("Refresh failed: \(errorMessage)", to: menu) }
         menu.addItem(.separator())
 
+        for isDefault in [false, true] {
+            let choices = NSMenu()
+            choices.autoenablesItems = false
+            for value in GaugeLayout.allCases {
+                let supported = value.rawValue < 2 || gaugeWidth >= 260
+                add(value.title + (supported ? "" : " · requires 260 pt+"), to: choices,
+                    action: isDefault ? #selector(changeDefaultLayout(_:)) : #selector(changeLayout(_:)),
+                    tag: value.rawValue, checked: value == (isDefault ? defaultLayout : layout))
+                choices.items.last?.isEnabled = supported
+            }
+            let item = NSMenuItem(title: isDefault ? "Default view" : "View", action: nil, keyEquivalent: "")
+            item.submenu = choices
+            menu.addItem(item)
+        }
+        if snapshot?.effectiveWindow(requested: .fiveHour) == .weekly {
+            add("Weekly exhaustion temporarily overrides the selected view", to: menu)
+        }
+
         let widthMenu = NSMenu()
         for width in widths { add("\(width) pt", to: widthMenu, action: #selector(changeWidth(_:)), tag: width, checked: width == gaugeWidth) }
         let widthItem = NSMenuItem(title: "Gauge width", action: nil, keyEquivalent: "")
@@ -328,6 +349,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    @objc private func changeLayout(_ sender: NSMenuItem) {
+        guard let value = GaugeLayout(rawValue: sender.tag), value.fitted(width: gaugeWidth) == value else { return }
+        layout = value
+        defaults.set(value.rawValue, forKey: "gaugeLayout")
+        render()
+    }
+
+    @objc private func changeDefaultLayout(_ sender: NSMenuItem) {
+        guard let value = GaugeLayout(rawValue: sender.tag), value.fitted(width: gaugeWidth) == value else { return }
+        defaultLayout = value
+        defaults.set(value.rawValue, forKey: "defaultGaugeLayout")
+        changeLayout(sender)
+    }
+
     @objc private func changeWidth(_ sender: NSMenuItem) {
         gaugeWidth = sender.tag
         layout = layout.fitted(width: gaugeWidth)
@@ -359,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTask = nil
         snapshot = nil
         errorMessage = nil
-        layout = .fiveHour
+        layout = defaultLayout.fitted(width: gaugeWidth)
         service = AIService.allCases[sender.tag]
         defaults.set(service.rawValue, forKey: "service")
         selectProvider()
