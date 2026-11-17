@@ -46,14 +46,16 @@ jobs:
           codesign --verify --deep --strict --verbose=2 dist/UsageBar.app
           test -f dist/UsageBar.app/Contents/Resources/AppIcon.icns
           test -f dist/UsageBar.app/Contents/Resources/UsageBarLogo.png
-          shasum -a 256 dist/UsageBar-0.3.0-macos-universal.zip > dist/UsageBar-0.3.0-macos-universal.zip.sha256
+          for ZIP in dist/UsageBar-*-macos-universal.zip; do
+            shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          done
 
       - name: Upload Universal release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: UsageBar-0.3.0-macos-universal
+          name: UsageBar-macos-universal
           path: |
-            dist/UsageBar-0.3.0-macos-universal.zip
-            dist/UsageBar-0.3.0-macos-universal.zip.sha256
+            dist/UsageBar-*-macos-universal.zip
+            dist/UsageBar-*-macos-universal.zip.sha256
           if-no-files-found: error
           retention-days: 14
