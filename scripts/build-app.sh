@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP_VERSION="${USAGEBAR_VERSION:-0.3.0}"
-BUILD_NUMBER="${USAGEBAR_BUILD:-3}"
+APP_VERSION="${USAGEBAR_VERSION:-0.4.2}"
+BUILD_NUMBER="${USAGEBAR_BUILD:-7}"
 BUNDLE_ID="${USAGEBAR_BUNDLE_ID:-io.github.oaseas.usagebar}"
 
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/module-cache"

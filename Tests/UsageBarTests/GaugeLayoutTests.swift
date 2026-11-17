@@ -16,3 +16,14 @@ import Testing
     #expect(GaugeLayout.countdownText(reset: now.addingTimeInterval(-3), now: now) == "00:00:00")
     #expect(GaugeLayout.countdownText(reset: now.addingTimeInterval(8096), now: now) == "02:14:56")
 }
+
+@Test func updatesNeverDowngradeOrInstallPrereleaseVersions() {
+    #expect(AppUpdater.isNewer("v0.5.0", than: "0.4.2"))
+    #expect(!AppUpdater.isNewer("v0.4.0", than: "0.4.2"))
+    #expect(!AppUpdater.isNewer("v0.4.2", than: "0.4.2"))
+    #expect(!AppUpdater.isNewer("v0.5.0-beta", than: "0.4.2"))
+}
+
+@Test func claudeMonitoringIsDisabled() async {
+    await #expect(throws: (any Error).self) { try await ClaudeUsageProvider().fetchUsage() }
+}

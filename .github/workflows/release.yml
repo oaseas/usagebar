@@ -73,7 +73,7 @@ jobs:
       - name: Build Universal app
         env:
           USAGEBAR_VERSION: ${{ steps.version.outputs.version }}
-          USAGEBAR_BUILD: 3
+          USAGEBAR_BUILD: 7
           USAGEBAR_SIGN_IDENTITY: ${{ steps.signing.outputs.developer_id == 'true' && secrets.MACOS_SIGN_IDENTITY || '-' }}
         run: ./scripts/build-release.sh
 

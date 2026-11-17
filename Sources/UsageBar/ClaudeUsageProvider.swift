@@ -12,19 +12,7 @@ actor ClaudeUsageProvider: UsageProvider {
     }
 
     func fetchUsage() async throws -> UsageSnapshot {
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-            guard let size = attributes[.size] as? NSNumber, size.intValue <= 5_000_000 else {
-                throw UsageProviderError(message: "Claude usage history is too large or unreadable.")
-            }
-            let modification = attributes[.modificationDate] as? Date
-            if let modification, modification == lastModification, let lastSnapshot { return lastSnapshot }
-            let value = try Self.decode(Data(contentsOf: fileURL))
-            lastModification = modification
-            lastSnapshot = value
-            return value
-        } catch let error as UsageProviderError { throw error }
-        catch { throw UsageProviderError(message: "Claude usage history unavailable. Open Claude and visit Settings → Usage.") }
+        throw UsageProviderError(message: "Claude monitoring is disabled. This build supports ChatGPT/Codex only.")
     }
 
     static func decode(_ data: Data, now: Date = Date()) throws -> UsageSnapshot {

@@ -8,7 +8,7 @@
 
 UsageBar keeps your current allowance visible in the macOS menu bar, so you do not have to keep opening account settings just to see how much you have left.
 
-It currently supports ChatGPT/Codex and Claude, with room to add more AI services over time. It is native, lightweight, local-first, and intentionally simple.
+It currently supports ChatGPT/Codex. Claude monitoring is disabled until a supported, permission-free integration is available. It is native, lightweight, local-first, and intentionally simple.
 
 ## Download
 
@@ -23,7 +23,7 @@ Installation is intentionally simple:
 
 The Universal build supports Intel and Apple Silicon Macs and targets macOS 13 or later.
 
-Claude is optional. You can use UsageBar with ChatGPT/Codex only.
+This release monitors ChatGPT/Codex only. It does not request Accessibility or Keychain permissions.
 
 ### macOS security
 
@@ -53,7 +53,7 @@ For ChatGPT, the default view shows the current 5-hour Codex allowance. At 120 a
 
 If the weekly allowance reaches zero while the current 5-hour window still has capacity, UsageBar automatically shows the weekly limit so the menu bar reflects the limit that is actually blocking you.
 
-You can also switch the app to Claude and view the latest usage percentages stored locally by Claude Desktop.
+Claude selection and background cache reads are disabled in this release.
 
 ## Features
 
@@ -61,7 +61,7 @@ You can also switch the app to Claude and view the latest usage percentages stor
 - No Electron
 - No third-party runtime dependencies
 - Wide configurable menu bar gauge
-- ChatGPT/Codex and optional Claude support
+- ChatGPT/Codex allowance monitoring
 - 5-hour and weekly views
 - Left-click to switch usage windows
 - Remaining or used percentage display
@@ -89,15 +89,7 @@ No separate UsageBar account is required.
 
 ### Claude
 
-Claude support is optional.
-
-UsageBar reads the percentages Claude Desktop stores locally in its usage history file. This is cached desktop data, not a direct UsageBar server connection.
-
-Claude reset times are not available from this local cache, so UsageBar does not invent them. The app shows the actual sample time and marks old readings as stale.
-
-The Claude cache format is not a public Anthropic API and may change in a future Claude Desktop update.
-
-More technical detail is available in [docs/TECHNICAL.md](docs/TECHNICAL.md).
+Claude monitoring is disabled. No Claude files, credentials, cookies, Accessibility APIs or Keychain items are accessed. Historical cache parsers remain only for compatibility tests; they are not used to fetch readings.
 
 ## Refreshing and resource use
 
@@ -180,7 +172,7 @@ UsageBar is designed as a local utility.
 
 It does not operate a UsageBar server, does not need your ChatGPT or Claude password, and does not read the contents of your conversations.
 
-For ChatGPT, authentication remains with Codex. For Claude, UsageBar reads only the local usage history needed for the gauge.
+Authentication remains with Codex. Claude files, cookies and Keychain items are not read.
 
 See [PRIVACY.md](PRIVACY.md) for the full explanation.
 
@@ -247,3 +239,10 @@ UsageBar is available under the MIT License. See [LICENSE](LICENSE).
 At 260 pt and above, click through 5H → 7D → both gauges → 5H + HH:MM:SS countdown. The countdown uses native monospaced system digits and matches the gauge color. It redraws locally once per second only in that view; provider polling is unchanged. Missing reset times show `--:--:--`; a due reset stays at `00:00:00` until the provider reports a new time. The exhausted weekly allowance still takes priority.
 
 Right-click **View** to select a layout directly. **Default view** saves a startup layout and applies it immediately; clicking through views does not change that default. Combined layouts require 260 pt or wider. A saved wide default falls back to 5H when opening at a narrow width.
+
+### ChatGPT/Codex only
+
+Claude monitoring is disabled: no Accessibility, Keychain, cookies, Claude files or Claude endpoints are accessed. The app rejects Claude selection from companion commands. ChatGPT/Codex allowances and countdown remain unchanged.
+
+### In-app updates
+Right-click → Check for Updates checks the latest stable release from oaseas/usagebar. Automatically Install Updates is optional (off initially), checks every six hours and on launch, and can restart UsageBar after a newer verified release is downloaded. The Universal ZIP, SHA-256 checksum, bundle identity/version and code signature are checked. Ad-hoc signing and a checksum are not independent publisher signing. A backup app is retained; settings migrate to the public bundle ID. No downgrade is performed. The feature must be included in a future public release to persist through subsequent updates.

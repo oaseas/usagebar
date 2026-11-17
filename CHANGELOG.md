@@ -2,6 +2,11 @@
 
 Notable changes to UsageBar will be documented here.
 
+## 0.4.2
+
+- Disable Claude monitoring; keep ChatGPT/Codex gauges and countdown.
+- Add manual update checks and opt-in automatic installation from official GitHub releases, with checksum and app validation, backups and downgrade protection.
+
 ## 0.3.0
 
 First public release.

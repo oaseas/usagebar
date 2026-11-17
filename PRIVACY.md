@@ -13,7 +13,7 @@ Depending on the selected service, UsageBar may read:
 
 For ChatGPT, usage information is requested from the locally running Codex app server.
 
-For Claude, usage information is read from Claude Desktop's local `plan-usage-history.json` file.
+Claude monitoring is disabled. UsageBar does not read Claude files or contact Claude endpoints.
 
 ## What UsageBar does not read
 
@@ -47,13 +47,9 @@ UsageBar starts one local Codex app-server helper and asks it for rate-limit inf
 
 UsageBar does not parse or copy Codex authentication files.
 
-## Claude local cache
+## Claude disabled
 
-Claude support is optional.
-
-UsageBar reads only the local usage history file needed to obtain Claude's cached usage percentages. The file is read-only from UsageBar's perspective.
-
-The Claude file format is not a public Anthropic API and may change. Claude reset times are not available from this file.
+Claude monitoring and background cache reads are disabled. No Accessibility permission, Keychain access, cookies or Claude authentication data are used.
 
 ## Optional local companion bridge
 
@@ -74,3 +70,9 @@ If this changes in a future release, this document should be updated clearly bef
 Please do not include passwords, tokens, cookies, account files, local usage-history files, or private companion dashboard files when opening an issue.
 
 A screenshot of the gauge and the exact visible error message are usually enough to start troubleshooting.
+
+## Claude access boundary
+Claude monitoring is disabled. UsageBar does not request Accessibility permission, read Keychain items, read Claude cookies or files, or contact Claude endpoints. Existing historical Claude documentation above does not describe the current release.
+
+## Update checks
+Manual or enabled automatic update checks contact api.github.com and download release assets from the official oaseas/usagebar GitHub repository. No usage readings, account IDs or writing content are sent. Automatic installation can restart the app and retains a backup. Automatic updates are disabled until enabled in the menu.

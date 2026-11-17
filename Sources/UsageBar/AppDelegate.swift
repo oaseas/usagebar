@@ -4,15 +4,14 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var appearanceObservation: NSKeyValueObservation?
+    private let updater = AppUpdater()
     private let liveProvider = CodexUsageProvider()
-    private let claudeProvider = ClaudeUsageProvider()
     private var useMock = false
     private var colorStyle = 0
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var readings: [AIService: UsageSnapshot] = [:]
     private var readingErrors: [AIService: String] = [:]
-    private var lastSecondaryRefresh = Date.distantPast
     private var controlTimer: Timer?
     private var snapshot: UsageSnapshot?
     private var errorMessage: String?
@@ -34,10 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon
         }
-        if let saved = defaults.string(forKey: "service"), let value = AIService(rawValue: saved) {
-            service = value
-            provider = MockUsageProvider(scenario: scenario, service: service)
-        }
+        service = .chatGPT
+        defaults.set(service.rawValue, forKey: "service")
         useMock = defaults.bool(forKey: "useMock")
         colorStyle = min(2, max(0, defaults.integer(forKey: "colorStyle")))
         selectProvider()
@@ -64,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controlTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.processCommand() }
         }
+        updater.start()
         refresh()
     }
 
@@ -97,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             provider = MockUsageProvider(scenario: scenario, service: service)
             Task { await liveProvider.disconnect() }
         } else {
-            provider = service == .chatGPT ? liveProvider : claudeProvider
+            provider = liveProvider
         }
     }
 
@@ -105,7 +103,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard refreshTask == nil else { return }
         let currentProvider = provider
         let currentService = service
-        let currentMock = isMock
         refreshTask = Task { [weak self] in
             do {
                 let value = try await currentProvider.fetchUsage()
@@ -116,21 +113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.errorMessage = nil
             } catch {
                 guard !Task.isCancelled, let self else { return }
+                if currentService == .claude { self.snapshot = nil; self.readings[.claude] = nil }
                 self.errorMessage = error.localizedDescription
                 self.readingErrors[currentService] = error.localizedDescription
             }
             guard let self else { return }
-            if !currentMock, Date().timeIntervalSince(self.lastSecondaryRefresh) >= 30 {
-                self.lastSecondaryRefresh = Date()
-                let other: AIService = currentService == .chatGPT ? .claude : .chatGPT
-                let otherProvider: any UsageProvider = other == .chatGPT ? self.liveProvider : self.claudeProvider
-                do {
-                    let value = try await otherProvider.fetchUsage()
-                    guard !Task.isCancelled else { return }
-                    self.readings[other] = value
-                    self.readingErrors[other] = nil
-                } catch { self.readingErrors[other] = error.localizedDescription }
-            }
             guard !Task.isCancelled else { return }
             self.refreshTask = nil
             self.render()
@@ -250,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if service == .claude { add("Claude records at most every 4Ž minutes", to: menu) }
         }
         let serviceMenu = NSMenu()
-        for (index, value) in AIService.allCases.enumerated() {
+        for (index, value) in [AIService.chatGPT].enumerated() {
             add(value.rawValue, to: serviceMenu, action: #selector(changeService(_:)), tag: index, checked: value == service)
         }
         let serviceItem = NSMenuItem(title: "AI service", action: nil, keyEquivalent: "")
@@ -264,7 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 add("\(name): \(Int((allowance.normalizedRemaining * 100).rounded()))% remaining", to: menu)
                 if let reset = allowance.resetsAt {
                     add("Resets \(reset.formatted(date: .abbreviated, time: .shortened))", to: menu)
-                } else { add("Reset time unavailable from local cache", to: menu) }
+                } else { add("Reset time unavailable from this data source", to: menu) }
             } else { add("\(name): unavailable", to: menu) }
         }
 
@@ -344,6 +331,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mockItem.submenu = mockMenu
         if isMock { menu.addItem(mockItem) }
         menu.addItem(.separator())
+        add("Check for Updates…", to: menu, action: #selector(checkForUpdates))
+        add("Automatically Install Updates", to: menu, action: #selector(toggleAutomaticUpdates), checked: updater.automatic)
         add("About UsageBar", to: menu, action: #selector(about))
         add("Quit UsageBar", to: menu, action: #selector(quit))
         return menu
@@ -390,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refresh()
     }
     @objc private func changeService(_ sender: NSMenuItem) {
+        guard sender.tag == 0 else { return }
         refreshTask?.cancel()
         refreshTask = nil
         snapshot = nil
@@ -446,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         var services: [String: Any] = [:]
         for item in AIService.allCases {
-            var row: [String: Any] = ["error": readingErrors[item] ?? ""]
+            var row: [String: Any] = ["error": item == .claude ? "Claude monitoring is disabled in this build." : (readingErrors[item] ?? "")]
             if let value = readings[item] {
                 row.merge(["fiveHour": allowance(value.fiveHour), "weekly": allowance(value.weekly),
                            "sampleAt": value.fetchedAt.timeIntervalSince1970, "source": value.source,
@@ -464,7 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func processCommand() {
         guard let command = DesktopIntegration.takeCommand() else { return }
         func item(_ tag: Int) -> NSMenuItem { let value = NSMenuItem(); value.tag = tag; return value }
-        if let name = command["service"] as? String, let value = AIService(rawValue: name),
+        if let name = command["service"] as? String, let value = AIService(rawValue: name), value == .chatGPT,
            let index = AIService.allCases.firstIndex(of: value) { changeService(item(index)) }
         if let width = command["width"] as? Int, widths.contains(width) { changeWidth(item(width)) }
         if let color = command["color"] as? Int, (0...2).contains(color) { changeColor(item(color)) }
@@ -480,6 +470,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
     }
 
+    @objc private func checkForUpdates() { Task { await updater.check(interactive: true) } }
+    @objc private func toggleAutomaticUpdates() { updater.toggle() }
+
     @objc private func about() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
@@ -491,7 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             alert.icon = NSApp.applicationIconImage
         }
-        alert.informativeText = "Made by oaseas\n\nA lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.\n\nChatGPT shows the Codex allowance from your existing local session. Claude optionally reads cached percentages from Claude Desktop; Claude reset times are unavailable. No separate UsageBar account or AI model calls are required.\n\nUsageBar is independent software and is not affiliated with OpenAI or Anthropic.\n\nMIT License."
+        alert.informativeText = "Made by oaseas\n\nA lightweight native macOS menu bar gauge for keeping an eye on your AI usage limits.\n\nChatGPT shows the Codex allowance from your existing local session. Claude monitoring is disabled in this build. No separate UsageBar account or AI model calls are required.\n\nUsageBar is independent software and is not affiliated with OpenAI or Anthropic.\n\nMIT License."
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "GitHub")
         alert.addButton(withTitle: "X @oaseas")
